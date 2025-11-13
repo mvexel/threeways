@@ -1,0 +1,1 @@
+-- any aux tables that osm2pgsql does not own
