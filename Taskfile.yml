@@ -1,0 +1,87 @@
+version: "3"
+
+dotenv: [".env"]
+
+vars:
+  FLEX_FILE: '{{.FLEX_FILE | default "osm2pgsql/poi_age.lua"}}'
+  OSM_MODE: '{{.OSM_MODE | default "create"}}'
+  PGDATABASE: '{{.PGDATABASE | default "threeways"}}'
+  PGUSER: '{{.PGUSER | default "threeways"}}'
+  PGPASSWORD: '{{.PGPASSWORD | default "threeways"}}'
+  PGHOST: '{{.PGHOST | default "localhost"}}'
+  PGPORT: '{{.PGPORT | default "5432"}}'
+  PGSCHEMA: '{{.PGSCHEMA | default "osm"}}'
+  OSM_CACHE: '{{.OSM_CACHE | default "1024"}}'
+
+tasks:
+  migrate:
+    desc: "Run database migrations"
+    summary: |
+      Runs all SQL files in sql/ directory against the database.
+    preconditions:
+      - sh: command -v psql >/dev/null
+        msg: "psql binary is required on PATH"
+    env:
+      PGPASSWORD: '{{.PGPASSWORD}}'
+    cmds:
+      - |
+        set -e
+        for sql_file in sql/*.sql; do
+          [ -e "$sql_file" ] || { echo "No SQL files in sql/"; exit 1; }
+          echo "Running $sql_file..."
+          psql \
+            -h {{.PGHOST}} \
+            -p {{.PGPORT}} \
+            -U {{.PGUSER}} \
+            -d {{.PGDATABASE}} \
+            -v ON_ERROR_STOP=1 \
+            -f "$sql_file"
+        done
+
+  import-osm:
+    desc: "Run the python CLI to load a PBF via osm2pgsql."
+    summary: |-
+      Imports an .osm.pbf into PostGIS using the poi_age flex Lua.
+      Required var: OSM_FILE=/path/to/region-latest.osm.pbf
+      Optional overrides: PGDATABASE, PGUSER, PGHOST, PGPORT, PGSCHEMA,
+      FLEX_FILE, OSM_CACHE (MB), OSM_MODE=create|append.
+      Pass Postgres credentials via .env or exported env vars (PGPASSWORD/pgpass).
+    requires:
+      vars: ["OSM_FILE"]
+    preconditions:
+      - sh: command -v python >/dev/null
+        msg: "python binary is required on PATH"
+    cmds:
+      - >
+        python -m pipeline import-osm "{{.OSM_FILE}}"
+        --flex-file {{.FLEX_FILE}}
+        --database {{.PGDATABASE}}
+        --username {{.PGUSER}}
+        --host {{.PGHOST}}
+        --port {{.PGPORT}}
+        --schema {{.PGSCHEMA}}
+        --cache {{.OSM_CACHE}}
+        {{if .PGPASSWORD}}--pgpassword {{.PGPASSWORD}}{{end}}
+        {{if eq .OSM_MODE "append"}}--append{{end}}
+
+  # conveniences for docker commands
+  db-up :
+    desc: "Start the Postgres database container"
+    cmds:
+      - docker-compose -f compose.dev.yaml up -d db
+
+  db-down :
+    desc: "Stop the Postgres database container"
+    cmds:
+      - docker-compose -f compose.dev.yaml down db
+      
+  db-logs :
+    desc: "Tail the Postgres database container logs"
+    cmds:
+      - docker-compose -f compose.dev.yaml logs -f db
+
+  db-shell :
+    desc: "Open a psql shell to the Postgres database container"
+    cmds:
+      - docker-compose -f compose.dev.yaml exec db psql -U {{.PGUSER}} -d {{.PGDATABASE}}
+
