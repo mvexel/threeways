@@ -1,3 +1,58 @@
 # for local dev, minified extracts, bind-mounted code
 
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: threeways-db
+    environment:
+      POSTGRES_DB: ${PGDATABASE:-threeways}
+      POSTGRES_USER: ${PGUSER:-postgres}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-postgres}
+    volumes:
+      # Init scripts run on first startup
+      - ./sql:/docker-entrypoint-initdb.d
+      # PostgreSQL data persistence
+      - ./data/postgres:/var/lib/postgresql/data
+      # Custom config if needed (commented out - causes permission issues)
+      # - ./config/postgresql.conf:/etc/postgresql/postgresql.conf
+    ports:
+      - "${PGPORT:-5432}:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${PGUSER:-postgres}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  pipeline:
+    build:
+      context: .
+      dockerfile: pipeline/Dockerfile
+    container_name: threeways-pipeline
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${PGDATABASE:-threeways}
+      PGUSER: ${PGUSER:-postgres}
+      PGPASSWORD: ${PGPASSWORD:-postgres}
+      PGSCHEMA: ${PGSCHEMA:-osm}
+      OSM_REGION: ${OSM_REGION:-utah}
+      PIPELINE_FLEX_FILE: /workspace/osm2pgsql/poi_age.lua
+    volumes:
+      # Bind mount code for dev hot reload
+      - ./pipeline:/workspace/pipeline
+      - ./osm2pgsql:/workspace/osm2pgsql
+      # OSM data cache
+      - ./data/osm:/data/osm
+      # Tiles output
+      - ./data/tiles:/data/tiles
+      # Logs
+      - ./data/logs:/data/logs
+    # Don't auto-start, run via task or manual trigger
+    profiles:
+      - manual
+
+volumes:
+  postgres_data:
